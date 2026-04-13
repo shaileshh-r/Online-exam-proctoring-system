@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { BookOpen, Code, FileText, Clock, ChevronRight, Star, Calendar, ArrowLeft } from 'lucide-react';
 import Aurora from './Aurora/Aurora';
 
-const ExamSelection = ({ exams, submissions, onSelect, onLogout, onViewResults }) => {
+const ExamSelection = ({ exams, submissions, onSelect, onLogout, onViewResults, onCreateExam, userId }) => {
     const [selectedId, setSelectedId] = useState(null);
 
     const getIcon = (iconName) => {
@@ -24,17 +24,40 @@ const ExamSelection = ({ exams, submissions, onSelect, onLogout, onViewResults }
                         <h1 className="text-4xl md:text-5xl font-black tracking-tight mb-2">Available <span className="text-blue-500">Exams</span></h1>
                         <p className="text-gray-400 text-lg">Select a test to begin your proctored session.</p>
                     </div>
-                    <button
-                        onClick={onLogout}
-                        className="flex items-center gap-2 px-6 py-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-2xl transition-all font-bold self-start md:self-center"
-                    >
-                        <ArrowLeft className="w-4 h-4" /> Sign Out
-                    </button>
+                    <div className="flex items-center gap-4 self-start md:self-center">
+                        <button
+                            onClick={() => {
+                                const title = window.prompt("Enter Peer Test Title:");
+                                if (title) {
+                                    onCreateExam({
+                                        id: Date.now(),
+                                        title: title,
+                                        type: 'Mixed',
+                                        icon: 'FileText',
+                                        duration: '30 mins',
+                                        questions: [{ id: 1, type: 'text', title: 'Peer Question', description: 'Please answer this peer review question.' }],
+                                        difficulty: 'Easy',
+                                        color: 'from-green-500 to-emerald-600',
+                                        description: `Mock Test created by student ${userId}.`
+                                    });
+                                }
+                            }}
+                            className="flex items-center gap-2 px-4 py-3 bg-blue-600/20 hover:bg-blue-600/40 text-blue-400 border border-blue-500/30 rounded-2xl transition-all font-bold"
+                        >
+                            + Peer Test
+                        </button>
+                        <button
+                            onClick={onLogout}
+                            className="flex items-center gap-2 px-6 py-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-2xl transition-all font-bold"
+                        >
+                            <ArrowLeft className="w-4 h-4" /> Sign Out
+                        </button>
+                    </div>
                 </header>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
                     {exams.map((test, idx) => {
-                        const isSubmitted = !!submissions[test.id];
+                        const isSubmitted = !!(submissions[test.id] && submissions[test.id][userId]);
                         return (
                             <div
                                 key={test.id}

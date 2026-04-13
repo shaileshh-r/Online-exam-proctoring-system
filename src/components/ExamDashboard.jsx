@@ -1,7 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { Maximize, AlertTriangle, Activity, UserX, Copy, Monitor, Play, Send, LogOut, Terminal, ChevronDown, Code, Percent, CheckCircle2, XCircle, Award, BarChart3, ArrowLeft } from 'lucide-react';
+import { Maximize, AlertTriangle, Activity, UserX, Copy, Monitor, Send, LogOut, Terminal, ChevronDown, Code, Percent, CheckCircle2, XCircle, Award, BarChart3, ArrowLeft } from 'lucide-react';
 import { useTypingAnalytics } from '../hooks/useTypingAnalytics';
-import Editor from '@monaco-editor/react';
 
 const languages = [
     { id: 'javascript', label: 'JavaScript' },
@@ -11,7 +10,7 @@ const languages = [
     { id: 'sql', label: 'SQL' }
 ];
 
-const ExamDashboard = ({ examData, isViewOnly, previousSubmission, onFinish }) => {
+const ExamDashboard = ({ examData, isViewOnly, previousSubmission, gradedData, onFinish, onBack }) => {
     const questions = examData?.questions || [];
     const { handleKeyDown, stats, resetAnalytics } = useTypingAnalytics();
     const [warnings, setWarnings] = useState([]);
@@ -33,26 +32,23 @@ const ExamDashboard = ({ examData, isViewOnly, previousSubmission, onFinish }) =
     });
     const [pasteCount, setPasteCount] = useState(0);
     const [showResults, setShowResults] = useState(isViewOnly);
-    const [isCompiling, setIsCompiling] = useState(false);
-    const [output, setOutput] = useState('');
     const [showSubmitModal, setShowSubmitModal] = useState(false);
 
     const videoRef = useRef(null);
     const timerRef = useRef(null);
+    const answersRef = useRef(null);
 
     const [answers, setAnswers] = useState(() => {
         if (isViewOnly && previousSubmission) return previousSubmission;
 
         const initial = {};
         questions.forEach(q => {
-            if (q.type === 'code') {
+            if (q.type !== 'mcq') {
                 const langData = {};
                 languages.forEach(l => langData[l.id] = '');
                 initial[q.id] = langData;
-            } else if (q.type === 'mcq') {
-                initial[q.id] = null;
             } else {
-                initial[q.id] = '';
+                initial[q.id] = null;
             }
         });
         return initial;
@@ -73,17 +69,6 @@ const ExamDashboard = ({ examData, isViewOnly, previousSubmission, onFinish }) =
 
     const score = isViewOnly ? calculateScore() : null;
 
-    const handleCodeChange = (value) => {
-        if (isViewOnly) return;
-        setAnswers(prev => ({
-            ...prev,
-            [questions[currentQuestion].id]: {
-                ...prev[questions[currentQuestion].id],
-                [selectedLanguage]: value
-            }
-        }));
-    };
-
     const handleAnswerChange = (val) => {
         if (isViewOnly) return;
         setAnswers(prev => ({
@@ -91,6 +76,51 @@ const ExamDashboard = ({ examData, isViewOnly, previousSubmission, onFinish }) =
             [questions[currentQuestion].id]: val
         }));
     };
+
+    useEffect(() => {
+        answersRef.current = answers;
+    }, [answers]);
+
+    useEffect(() => {
+        if (isViewOnly) return;
+        const handleMessage = (e) => {
+            if (e.origin === "https://onecompiler.com" && e.data) {
+                let newCode = null;
+                if (e.data.files && e.data.files.length > 0) {
+                    newCode = e.data.files[0].content;
+                } else if (typeof e.data.code === 'string') {
+                    newCode = e.data.code;
+                }
+
+                if (newCode !== null) {
+                    const currentAns = answersRef.current?.[questions[currentQuestion]?.id] || {};
+                    const oldCode = currentAns[selectedLanguage] || "";
+                    if (newCode === oldCode) return;
+
+                    const diff = newCode.length - oldCode.length;
+                    
+                    if (Math.abs(diff) > 5) {
+                         if (diff > 5) handlePaste();
+                    } else if (diff > 0) {
+                         for(let i=0; i<diff; i++) handleKeyDown({ key: 'a' });
+                    } else if (diff < 0) {
+                         for(let i=0; i<-diff; i++) handleKeyDown({ key: 'Backspace' });
+                    }
+                    
+                    setAnswers(prev => ({
+                        ...prev,
+                        [questions[currentQuestion].id]: {
+                            ...(prev[questions[currentQuestion].id] || {}),
+                            [selectedLanguage]: newCode
+                        }
+                    }));
+                }
+            }
+        };
+
+        window.addEventListener('message', handleMessage);
+        return () => window.removeEventListener('message', handleMessage);
+    }, [isViewOnly, handleKeyDown, currentQuestion, questions, selectedLanguage]);
 
     useEffect(() => {
         if (isViewOnly) return;
@@ -204,54 +234,19 @@ const ExamDashboard = ({ examData, isViewOnly, previousSubmission, onFinish }) =
         });
     };
 
-    const handleEditorDidMount = (editor, monaco) => {
-        if (isViewOnly) return;
-        editor.onKeyDown((e) => {
-            if (e.browserEvent) {
-                handleKeyDown(e.browserEvent);
-            }
-        });
-
-        editor.onDidPaste(() => {
-            handlePaste();
-        });
-    };
-
     const handleSubmitExam = () => {
         setShowSubmitModal(true);
     };
 
     const confirmSubmit = () => {
-        onFinish(answers);
-    };
-
-    const handleRunCode = () => {
-        setIsCompiling(true);
-        setOutput('');
-
-        // Simulate compilation and execution
-        setTimeout(() => {
-            setIsCompiling(false);
-            const code = answers[currentQ.id]?.[selectedLanguage] || '';
-
-            if (!code.trim()) {
-                setOutput('> Error: No code provided to execute.');
-                return;
+        onFinish({
+            answers,
+            telemetry: {
+                ...stats,
+                pasteCount,
+                warnings
             }
-
-            // Simulated logic-based output
-            if (selectedLanguage === 'javascript' || selectedLanguage === 'python') {
-                if (code.toLowerCase().includes('print') || code.toLowerCase().includes('console.log')) {
-                    setOutput('> Executing...\n> Output: Hello World\n> Process finished with exit code 0');
-                } else {
-                    setOutput('> Executing...\n> Process finished with exit code 0 (No output generated)');
-                }
-            } else if (selectedLanguage === 'sql') {
-                setOutput('> Running Query...\n> Success: 15 rows affected\n> [Result Set Window Opened]');
-            } else {
-                setOutput('> Compiling...\n> Linked successfully.\n> Executing...\n> Finished.');
-            }
-        }, 1500);
+        });
     };
 
     const currentQ = questions[currentQuestion];
@@ -340,7 +335,7 @@ const ExamDashboard = ({ examData, isViewOnly, previousSubmission, onFinish }) =
                             </>
                         ) : (
                             <button
-                                onClick={() => onFinish(null)}
+                                onClick={() => onBack ? onBack() : onFinish(null)}
                                 className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 text-gray-400 border border-white/10 rounded-xl transition-all text-sm font-bold"
                             >
                                 <ArrowLeft className="w-4 h-4" /> Return to Selection
@@ -360,9 +355,21 @@ const ExamDashboard = ({ examData, isViewOnly, previousSubmission, onFinish }) =
                                             <Award className="w-12 h-12 text-white" />
                                         </div>
                                         <h2 className="text-5xl font-black mb-4 tracking-tight">
-                                            {score?.isManual ? 'Assessment Submitted' : 'Assessment Score'}
+                                            {gradedData?.isPublished ? 'Graded Assessment' : score?.isManual ? 'Assessment Submitted' : 'Assessment Score'}
                                         </h2>
-                                        {score?.isManual ? (
+                                        
+                                        {gradedData?.isPublished ? (
+                                            <div className="flex flex-col items-center gap-2 mb-8">
+                                                <div className="px-6 py-2 bg-green-500/20 text-green-400 rounded-full border border-green-500/30 text-sm font-bold uppercase tracking-widest">
+                                                    Results Published
+                                                </div>
+                                                <p className="text-gray-500 text-sm mt-2">Total Score: 
+                                                   <span className="text-white font-bold ml-2 text-xl">
+                                                      {Object.values(gradedData.marks || {}).reduce((sum, m) => sum + (Number(m) || 0), 0)}
+                                                   </span>
+                                                </p>
+                                            </div>
+                                        ) : score?.isManual ? (
                                             <div className="flex flex-col items-center gap-2 mb-8">
                                                 <div className="px-6 py-2 bg-blue-500/20 text-blue-400 rounded-full border border-blue-500/30 text-sm font-bold uppercase tracking-widest">
                                                     Manual Grading Pending
@@ -375,20 +382,21 @@ const ExamDashboard = ({ examData, isViewOnly, previousSubmission, onFinish }) =
                                                 <span className="text-3xl text-gray-500 font-bold">/ {score?.total}</span>
                                             </div>
                                         )}
+                                        
                                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 w-full max-w-2xl mt-4">
                                             <div className="p-6 rounded-3xl bg-white/5 border border-white/5 group hover:bg-white/10 transition-colors">
                                                 <BarChart3 className="w-6 h-6 text-blue-400 mb-3 mx-auto" />
-                                                <div className="text-2xl font-black">{score?.isManual ? '--' : `${score?.percent}%`}</div>
+                                                <div className="text-2xl font-black">{gradedData?.isPublished ? '--' : score?.isManual ? '--' : `${score?.percent}%`}</div>
                                                 <div className="text-xs text-gray-500 uppercase font-black tracking-widest">Accuracy</div>
                                             </div>
                                             <div className="p-6 rounded-3xl bg-white/5 border border-white/5 group hover:bg-white/10 transition-colors">
                                                 <CheckCircle2 className="w-6 h-6 text-green-400 mb-3 mx-auto" />
-                                                <div className="text-2xl font-black">{score?.isManual ? 'Saved' : score?.correct}</div>
+                                                <div className="text-2xl font-black">{gradedData?.isPublished ? 'Graded' : score?.isManual ? 'Saved' : score?.correct}</div>
                                                 <div className="text-xs text-gray-500 uppercase font-black tracking-widest">Status</div>
                                             </div>
                                             <div className="p-6 rounded-3xl bg-white/5 border border-white/5 group hover:bg-white/10 transition-colors">
                                                 <XCircle className="w-6 h-6 text-red-400 mb-3 mx-auto" />
-                                                <div className="text-2xl font-black">{score?.isManual ? '0' : score?.total - score?.correct}</div>
+                                                <div className="text-2xl font-black">{gradedData?.isPublished ? '0' : score?.isManual ? '0' : score?.total - score?.correct}</div>
                                                 <div className="text-xs text-gray-500 uppercase font-black tracking-widest">Issues</div>
                                             </div>
                                         </div>
@@ -474,7 +482,7 @@ const ExamDashboard = ({ examData, isViewOnly, previousSubmission, onFinish }) =
                             </div>
 
                             <div className="flex-1 flex flex-col p-8 bg-[#020617] relative" onKeyDownCapture={!isViewOnly ? handleKeyDown : undefined}>
-                                {currentQ.type === 'code' ? (
+                                {currentQ.type !== 'mcq' ? (
                                     <div className="flex-1 flex flex-col rounded-2xl border border-white/10 overflow-hidden bg-[#1e1e1e] shadow-2xl">
                                         <div className="bg-[#252526] px-4 py-3 border-b border-white/5 flex items-center justify-between">
                                             <div className="flex items-center gap-4">
@@ -500,59 +508,24 @@ const ExamDashboard = ({ examData, isViewOnly, previousSubmission, onFinish }) =
                                                     </div>
                                                 </div>
                                             </div>
-                                            {!isViewOnly && (
-                                                <button
-                                                    onClick={handleRunCode}
-                                                    disabled={isCompiling}
-                                                    className="flex items-center gap-2 px-4 py-1.5 bg-green-600/20 hover:bg-green-600/30 text-green-400 border border-green-500/20 rounded-lg text-xs font-bold transition-all"
-                                                >
-                                                    {isCompiling ? <div className="w-3 h-3 border-2 border-green-400 border-t-transparent rounded-full animate-spin" /> : <Play className="w-3 h-3" />}
-                                                    Run Code
-                                                </button>
-                                            )}
                                         </div>
                                         {isViewOnly && (
-                                            <div className="bg-blue-600/10 border-b border-blue-500/20 px-4 py-2 flex items-center gap-2 text-[10px] font-bold text-blue-400 uppercase tracking-widest">
+                                            <div className="bg-blue-600/10 border-b border-blue-500/20 px-4 py-2 flex items-center gap-2 text-[10px] font-bold text-blue-400 uppercase tracking-widest mb-2 z-10 relative">
                                                 <Award className="w-3 h-3" /> Submitted Solution Review Mode
                                             </div>
                                         )}
-                                        <Editor
-                                            height="100%"
-                                            theme="vs-dark"
-                                            onMount={handleEditorDidMount}
-                                            language={selectedLanguage === 'cpp' ? 'cpp' : selectedLanguage}
-                                            value={answers[currentQ.id]?.[selectedLanguage] || ''}
-                                            onChange={handleCodeChange}
-                                            options={{
-                                                minimap: { enabled: false },
-                                                fontSize: 14,
-                                                padding: { top: 20 },
-                                                scrollBeyondLastLine: false,
-                                                automaticLayout: true,
-                                                readOnly: isViewOnly
-                                            }}
-                                        />
-                                        <div className={`h-1/3 bg-[#050505] border-t border-white/10 flex flex-col transition-all overflow-hidden`}>
-                                            <div className="px-4 py-2 border-b border-white/5 flex items-center justify-between bg-black/40">
-                                                <div className="flex items-center gap-2 text-gray-500 uppercase tracking-widest text-[10px] font-bold">
-                                                    <Terminal className="w-3 h-3 text-blue-400" /> Terminal Output
-                                                </div>
-                                                {output && (
-                                                    <button onClick={() => setOutput('')} className="text-[10px] text-gray-600 hover:text-gray-400 transition-colors font-bold uppercase">Clear</button>
-                                                )}
-                                            </div>
-                                            <div className="flex-1 p-4 font-mono text-xs overflow-y-auto custom-scrollbar">
-                                                {output ? (
-                                                    <pre className="text-gray-300 leading-relaxed break-words whitespace-pre-wrap">{output}</pre>
-                                                ) : (
-                                                    <div className="h-full flex items-center justify-center text-gray-700 italic select-none">
-                                                        No output to show. Click 'Run Code' to execute.
-                                                    </div>
-                                                )}
-                                            </div>
+                                        <div className="flex-1 w-full relative">
+                                            <iframe
+                                                title="OneCompiler"
+                                                src={`https://onecompiler.com/embed/${selectedLanguage === 'sql' ? 'mysql' : selectedLanguage}?theme=dark&hideLanguageSelection=true&hideTitle=true&codeChangeEvent=true&listenToEvents=true`}
+                                                width="100%"
+                                                height="100%"
+                                                className="border-0 w-full h-full absolute inset-0 rounded-b-2xl"
+                                                allow="clipboard-write"
+                                            ></iframe>
                                         </div>
                                     </div>
-                                ) : currentQ.type === 'mcq' ? (
+                                ) : (
                                     <div className="flex-1 flex flex-col gap-4">
                                         {currentQ.options.map((opt, oIdx) => {
                                             const isSelected = answers[currentQ.id] === oIdx;
@@ -582,18 +555,6 @@ const ExamDashboard = ({ examData, isViewOnly, previousSubmission, onFinish }) =
                                                 </button>
                                             );
                                         })}
-                                    </div>
-                                ) : (
-                                    <div className="flex-1 flex flex-col rounded-2xl border border-white/10 overflow-hidden bg-white/5">
-                                        <textarea
-                                            className="flex-1 bg-transparent p-6 text-gray-200 focus:outline-none font-sans italic resize-none leading-relaxed text-lg"
-                                            placeholder="Type your answer here..."
-                                            value={answers[currentQ.id] || ''}
-                                            onKeyDown={handleKeyDown}
-                                            onPaste={handlePaste}
-                                            readOnly={isViewOnly}
-                                            onChange={(e) => handleAnswerChange(e.target.value)}
-                                        />
                                     </div>
                                 )}
 
